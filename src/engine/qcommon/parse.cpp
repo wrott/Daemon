@@ -2971,8 +2971,8 @@ static int Parse_Directive_include( source_t *source )
 		{
 			// buffer too small?
 			path[ MAX_QPATH - 1 ] = 0;
-			strncpy( path, source->includepath, MAX_QPATH - 1 );
-			strncat( path, token.string, MAX_QPATH - 1 );
+			Q_strncpyz( path, source->includepath, MAX_QPATH - 1 );
+			Q_strcat( path, MAX_QPATH - 1, token.string);
 			script = Parse_LoadScriptFile( path );
 		}
 	}
@@ -2990,7 +2990,7 @@ static int Parse_Directive_include( source_t *source )
 
 			if ( token.type == tokenType_t::TT_PUNCTUATION && *token.string == '>' ) { break; }
 
-			strncat( path, token.string, MAX_QPATH - 1 );
+			Q_strcat( path, MAX_QPATH - 1, token.string );
 		}
 
 		if ( *token.string != '>' )
