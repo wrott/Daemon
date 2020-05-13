@@ -393,12 +393,21 @@ void* operator new(size_t n)
 		Sys::Error("Out of memory");
 	return p;
 }
+
 void operator delete(void* p) NOEXCEPT
 {
 	if (!Sys::processTerminating) {
 		free(p);
 	}
 }
+
+void operator delete(void* p, size_t) NOEXCEPT
+{
+	if (!Sys::processTerminating) {
+		free(p);
+	}
+}
+
 
 /**
  * Both client and server can use this, and it will
