@@ -327,9 +327,6 @@ extern cvar_t *sv_dl_maxRate;
 extern cvar_t *sv_wwwDownload; // general flag to enable/disable www download redirects
 extern cvar_t *sv_wwwBaseURL; // the base URL of all the files
 
-// tell clients to perform their downloads while disconnected from the server
-// this gets you a better throughput, but you lose the ability to control the download usage
-extern cvar_t *sv_wwwDlDisconnected;
 extern cvar_t *sv_wwwFallbackURL;
 
 //bani
@@ -371,14 +368,14 @@ void SV_GetPlayerPubkey( int clientNum, char *pubkey, int size );
 void SV_CreateBaseline();
 
 void SV_ChangeMaxClients();
-void SV_SpawnServer(const std::string pakname, const std::string server);
+void SV_SpawnServer(std::string pakname, std::string server);
 
 //
 // sv_client.c
 //
-void SV_GetChallenge( netadr_t from );
+void SV_GetChallenge( const netadr_t& from );
 
-void SV_DirectConnect( netadr_t from, const Cmd::Args& args );
+void SV_DirectConnect( const netadr_t& from, const Cmd::Args& args );
 
 void SV_ExecuteClientMessage( client_t *cl, msg_t *msg );
 void SV_UserinfoChanged( client_t *cl );

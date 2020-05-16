@@ -19,6 +19,7 @@ set(SHAREDLIST_sgame
 )
 
 set(COMMONLIST
+    ${COMMON_DIR}/Assert.h
     ${COMMON_DIR}/Color.h
     ${COMMON_DIR}/Color.cpp
     ${COMMON_DIR}/Command.cpp
@@ -134,10 +135,6 @@ set(GLSLSOURCELIST
     ${ENGINE_DIR}/renderer/glsl_source/ssao_fp.glsl
     ${ENGINE_DIR}/renderer/glsl_source/ssao_vp.glsl
     ${ENGINE_DIR}/renderer/glsl_source/vertexAnimation_vp.glsl
-    ${ENGINE_DIR}/renderer/glsl_source/vertexLighting_DBS_entity_fp.glsl
-    ${ENGINE_DIR}/renderer/glsl_source/vertexLighting_DBS_entity_vp.glsl
-    ${ENGINE_DIR}/renderer/glsl_source/vertexLighting_DBS_world_fp.glsl
-    ${ENGINE_DIR}/renderer/glsl_source/vertexLighting_DBS_world_vp.glsl
     ${ENGINE_DIR}/renderer/glsl_source/vertexSimple_vp.glsl
     ${ENGINE_DIR}/renderer/glsl_source/vertexSkinning_vp.glsl
     ${ENGINE_DIR}/renderer/glsl_source/vertexSprite_vp.glsl
@@ -212,8 +209,11 @@ endforeach()
 set(SERVERLIST
     ${ENGINE_DIR}/botlib/bot_api.h
     ${ENGINE_DIR}/botlib/bot_convert.cpp
+    ${ENGINE_DIR}/botlib/bot_convert.h
+    ${ENGINE_DIR}/botlib/bot_debug.h
     ${ENGINE_DIR}/botlib/bot_load.cpp
     ${ENGINE_DIR}/botlib/bot_local.cpp
+    ${ENGINE_DIR}/botlib/bot_local.h
     ${ENGINE_DIR}/botlib/bot_nav.cpp
     ${ENGINE_DIR}/botlib/bot_navdraw.h
     ${ENGINE_DIR}/botlib/bot_types.h
@@ -235,6 +235,7 @@ set(SERVERLIST
 
 set(ENGINELIST
     ${ENGINE_DIR}/framework/Application.cpp
+    ${ENGINE_DIR}/framework/Application.h
     ${ENGINE_DIR}/framework/BaseCommands.cpp
     ${ENGINE_DIR}/framework/BaseCommands.h
     ${ENGINE_DIR}/framework/CommandBufferHost.cpp
@@ -294,11 +295,10 @@ set(QCOMMONLIST
     ${ENGINE_DIR}/qcommon/net_chan.cpp
     ${ENGINE_DIR}/qcommon/net_ip.cpp
     ${ENGINE_DIR}/qcommon/net_types.h
-    ${ENGINE_DIR}/qcommon/parse.cpp
     ${ENGINE_DIR}/qcommon/print_translated.h
     ${ENGINE_DIR}/qcommon/qcommon.h
     ${ENGINE_DIR}/qcommon/qfiles.h
-    ${ENGINE_DIR}/qcommon/surfaceflags.h
+    ${ENGINE_DIR}/qcommon/SurfaceFlags.h
     ${ENGINE_DIR}/qcommon/sys.h
     ${ENGINE_DIR}/qcommon/translation.cpp
 )

@@ -51,30 +51,22 @@ Maryland 20850 USA.
 
 sharedEntity_t *SV_GentityNum( int num )
 {
-	sharedEntity_t *ent;
-
-	if ( num < 0 || num >= MAX_GENTITIES )
+	if ( num < 0 || num >= MAX_GENTITIES || sv.gentities == nullptr )
 	{
 		Sys::Drop( "SV_GentityNum: bad num %d", num );
 	}
 
-	ent = ( sharedEntity_t * )( ( byte * ) sv.gentities + sv.gentitySize * ( num ) );
-
-	return ent;
+	return ( sharedEntity_t * )( ( byte * ) sv.gentities + sv.gentitySize * ( num ) );
 }
 
 playerState_t  *SV_GameClientNum( int num )
 {
-	playerState_t *ps;
-
-	if ( num >= sv_maxclients->integer )
+	if ( num < 0 || num >= sv_maxclients->integer || sv.gameClients == nullptr )
 	{
 		Sys::Drop( "SV_GameClientNum: bad num" );
 	}
 
-	ps = ( playerState_t * )( ( byte * ) sv.gameClients + sv.gameClientSize * ( num ) );
-
-	return ps;
+	return ( playerState_t * )( ( byte * ) sv.gameClients + sv.gameClientSize * ( num ) );
 }
 
 svEntity_t     *SV_SvEntityForGentity( sharedEntity_t *gEnt )
@@ -191,9 +183,10 @@ SV_LocateGameData
 void SV_LocateGameData( const IPC::SharedMemory& shmRegion, int numGEntities, int sizeofGEntity_t,
                         int sizeofGameClient )
 {
-	if ( numGEntities < 0 || sizeofGEntity_t < 0 || sizeofGameClient < 0 )
+	if ( numGEntities < 0 || numGEntities > MAX_GENTITIES || sizeofGEntity_t < 0 || sizeofGameClient < 0
+	     || sizeofGEntity_t % alignof(sharedEntity_t) || sizeofGEntity_t % alignof(playerState_t) )
 		Sys::Drop( "SV_LocateGameData: Invalid game data parameters" );
-	if ( (int) shmRegion.GetSize() < numGEntities * sizeofGEntity_t + sv_maxclients->integer * sizeofGameClient )
+	if ( int64_t(shmRegion.GetSize()) < int64_t(MAX_GENTITIES) * sizeofGEntity_t + int64_t(sv_maxclients->integer) * sizeofGameClient )
 		Sys::Drop( "SV_LocateGameData: Shared memory region too small" );
 
 	char* base = static_cast<char*>(shmRegion.GetBase());
@@ -201,8 +194,14 @@ void SV_LocateGameData( const IPC::SharedMemory& shmRegion, int numGEntities, in
 	sv.gentitySize = sizeofGEntity_t;
 	sv.num_entities = numGEntities;
 
-	sv.gameClients = reinterpret_cast<playerState_t*>(base + MAX_GENTITIES * sizeofGEntity_t);
+	sv.gameClients = reinterpret_cast<playerState_t*>(base + MAX_GENTITIES * size_t(sizeofGEntity_t));
 	sv.gameClientSize = sizeofGameClient;
+}
+
+static void UnlocateGameData()
+{
+	sv.gentities = nullptr;
+	sv.gameClients = nullptr;
 }
 
 /*
@@ -376,6 +375,7 @@ void GameVM::GameShutdown(bool restart)
 
 	// Release the shared memory region
 	this->shmRegion.Close();
+	UnlocateGameData();
 }
 
 bool GameVM::GameClientConnect(char* reason, size_t size, int clientNum, bool firstTime, bool isBot)
@@ -535,19 +535,6 @@ void GameVM::QVMSyscall(int index, Util::Reader& reader, IPC::Channel& channel)
 		IPC::HandleMsg<GetEntityTokenMsg>(channel, std::move(reader), [this](bool& boolRes, std::string& res) {
 			res = COM_Parse(&sv.entityParsePoint);
 			boolRes = sv.entityParsePoint or res.size() > 0;
-		});
-		break;
-
-	case G_SEND_MESSAGE:
-		IPC::HandleMsg<SendMessageMsg>(channel, std::move(reader), [this](int, std::vector<uint8_t>) {
-			Log::Warn("SendMessageMsg unsupported");
-		});
-		break;
-
-	case G_MESSAGE_STATUS:
-		IPC::HandleMsg<MessageStatusMsg>(channel, std::move(reader), [this](int, messageStatus_t& status) {
-			Log::Warn("MessageStatusMsg unsupported");
-			status = {};
 		});
 		break;
 

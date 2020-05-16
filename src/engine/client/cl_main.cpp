@@ -90,13 +90,6 @@ Cvar::Cvar<std::string> cvar_demo_status_filename(
     ""
 );
 
-Cvar::Cvar<std::string> cvar_demo_next(
-    "demo.next",
-    "Name of the demo to play after the current one",
-    Cvar::NONE,
-    ""
-);
-
 cvar_t *cl_aviFrameRate;
 
 cvar_t *cl_freelook;
@@ -188,7 +181,7 @@ int            serverStatusCount;
 void        CL_CheckForResend();
 void        CL_ShowIP_f();
 void        CL_ServerStatus_f();
-void        CL_ServerStatusResponse( netadr_t from, msg_t *msg );
+void        CL_ServerStatusResponse( const netadr_t& from, msg_t *msg );
 
 static void CL_UpdateMumble()
 {
@@ -515,7 +508,7 @@ CL_DemoCompleted
 =================
 */
 
-void CL_DemoCompleted()
+NORETURN static void CL_DemoCompleted()
 {
 	if ( cvar_demo_timedemo.Get() )
 	{
@@ -530,8 +523,7 @@ void CL_DemoCompleted()
 		}
 	}
 
-	CL_Disconnect( true );
-	CL_NextDemo();
+	throw Sys::DropErr(false, "Demo completed");
 }
 
 /*
@@ -550,7 +542,6 @@ void CL_ReadDemoMessage()
 	if ( !clc.demofile )
 	{
 		CL_DemoCompleted();
-		return;
 	}
 
 	// get the sequence number
@@ -559,7 +550,6 @@ void CL_ReadDemoMessage()
 	if ( r != 4 )
 	{
 		CL_DemoCompleted();
-		return;
 	}
 
 	clc.serverMessageSequence = LittleLong( s );
@@ -573,7 +563,6 @@ void CL_ReadDemoMessage()
 	if ( r != 4 )
 	{
 		CL_DemoCompleted();
-		return;
 	}
 
 	buf.cursize = LittleLong( buf.cursize );
@@ -581,7 +570,6 @@ void CL_ReadDemoMessage()
 	if ( buf.cursize == -1 )
 	{
 		CL_DemoCompleted();
-		return;
 	}
 
 	if ( buf.cursize > buf.maxsize )
@@ -595,7 +583,6 @@ void CL_ReadDemoMessage()
 	{
 		Log::Notice("Demo file was truncated.");
 		CL_DemoCompleted();
-		return;
 	}
 
 	clc.lastPacketTime = cls.realtime;
@@ -619,8 +606,6 @@ class DemoPlayCmd: public Cmd::StaticCmd {
             Cvar_Set( "sv_killserver", "1" );
             CL_Disconnect( true );
 
-            //  CL_FlushMemory();   //----(SA)  MEM NOTE: in missionpack, this is moved to CL_DownloadsComplete
-
             // open the demo file
             const std::string& fileName = args.Argv(1);
 
@@ -639,7 +624,7 @@ class DemoPlayCmd: public Cmd::StaticCmd {
                     Com_sprintf(name, sizeof(name), "demos/%s.dm_%d", arg, prot_ver);
                 }
 
-                FS_FOpenFileRead(name, &clc.demofile, true);
+                FS_FOpenFileRead(name, &clc.demofile);
                 prot_ver++;
             }
 
@@ -673,29 +658,6 @@ class DemoPlayCmd: public Cmd::StaticCmd {
         }
 };
 static DemoPlayCmd DemoPlayCmdRegistration;
-
-/*
-==================
-CL_NextDemo
-
-Called when a demo or cinematic finishes
-If the "demo.next" cvar is set, that command will be issued
-==================
-*/
-void CL_NextDemo()
-{
-	std::string v = cvar_demo_next.Get();
-
-	if ( v.empty() )
-	{
-		return;
-	}
-
-	Log::Debug( "CL_NextDemo: %s", v );
-	cvar_demo_next.Set("");
-	Cmd::BufferCommandTextAfter("demo_play " + Cmd::Escape(v), false);
-	Cmd::ExecuteCommandBuffer();
-}
 
 // stop demo recording and playback
 static void StopDemos()
@@ -760,21 +722,7 @@ void CL_ShutdownAll()
 
 	StopVideo();
 	// Gordon: stop recording on map change etc, demos aren't valid over map changes anyway
-	StopDemos();
-}
-
-/*
-=================
-CL_FlushMemory
-
-Called by CL_DownloadsComplete (the only way a client gets into a game)
-Also called on a DropError
-=================
-*/
-void CL_FlushMemory()
-{
-	// shutdown all the client stuff
-	CL_ShutdownAll();
+	CL_StopRecord();
 
 	if ( !com_sv_running->integer )
 	{
@@ -786,8 +734,6 @@ void CL_FlushMemory()
 	}
 
 	Hunk_Clear();
-
-	CL_StartHunkUsers();
 }
 
 /*
@@ -821,7 +767,11 @@ void CL_MapLoading()
 	}
 	else
 	{
-		CL_Disconnect( false );
+		try {
+			CL_Disconnect( false );
+		} catch (Sys::DropErr& err) {
+			Sys::Error( "CL_Disconnect error during map load: %s", err.what() );
+		}
 		Q_strncpyz( cls.servername, "loopback", sizeof( cls.servername ) );
 		*cls.reconnectCmd = 0; // can't reconnect to this!
 		cls.state = connstate_t::CA_CHALLENGING; // so the connect screen is drawn
@@ -886,17 +836,14 @@ void CL_Disconnect( bool showMainMenu )
 		mumble_unlink();
 	}
 
-	if ( !cls.bWWWDlDisconnected )
+	if ( clc.download )
 	{
-		if ( clc.download )
-		{
-			FS_FCloseFile( clc.download );
-			clc.download = 0;
-		}
-
-		*cls.downloadTempName = *cls.downloadName = 0;
-		Cvar_Set( "cl_downloadName", "" );
+		FS_FCloseFile( clc.download );
+		clc.download = 0;
 	}
+
+	*cls.downloadTempName = *cls.downloadName = 0;
+	Cvar_Set( "cl_downloadName", "" );
 
 	StopVideo();
 	StopDemos();
@@ -912,10 +859,7 @@ void CL_Disconnect( bool showMainMenu )
 	clc.~clientConnection_t();
 	new(&clc) clientConnection_t{}; // Using {} instead of () to work around MSVC bug
 
-	if ( !cls.bWWWDlDisconnected )
-	{
-		CL_ClearStaticDownload();
-	}
+	CL_ClearStaticDownload();
 
 	FS::PakPath::ClearPaks();
 	FS_LoadBasePak();
@@ -1012,7 +956,7 @@ CL_Disconnect_f
 */
 void CL_Disconnect_f()
 {
-	CL_Disconnect( false );
+	throw Sys::DropErr(false, "Disconnecting.");
 }
 
 /*
@@ -1106,29 +1050,30 @@ void CL_Connect_f()
 
 	Audio::StopAllSounds(); // NERVE - SMF
 
-	Cvar_Set( "ui_connecting", "1" );
-
 	// clear any previous "server full" type messages
 	clc.serverMessage[ 0 ] = 0;
 
 	if ( com_sv_running->integer && !strcmp( server, "loopback" ) )
 	{
 		// if running a local server, kill it
-		SV_Shutdown( "Server quit\n" );
+		SV_Shutdown( "Server quit" );
 	}
 
 	// make sure a local server is killed
 	Cvar_Set( "sv_killserver", "1" );
 	SV_Frame( 0 );
 
-	CL_Disconnect( true );
+	try {
+		CL_Disconnect( true );
+	} catch (Sys::DropErr& err) {
+		Sys::Error( "CL_Disconnect error during /connect: %s", err.what() );
+	}
 	Con_Close();
 
 	if ( !NET_StringToAdr( cls.servername, &clc.serverAddress, family ) )
 	{
 		Log::Notice("Bad server address" );
 		cls.state = connstate_t::CA_DISCONNECTED;
-		Cvar_Set( "ui_connecting", "0" );
 		return;
 	}
 
@@ -1258,7 +1203,7 @@ public:
 	 * Pops a queued command and executes it whenever there's a matching challenge.
 	 * Returns whether the command has been successful
 	 */
-	bool Pop(const netadr_t &server, const Str::StringRef& challenge)
+	bool Pop(const netadr_t& server, const Str::StringRef& challenge)
 	{
 		auto lock = std::unique_lock<std::mutex>(mutex);
 
@@ -1360,7 +1305,7 @@ public:
 	 * use the challenge to do so.
 	 * Returns true if a command has been executed
 	 */
-	bool HandleChallenge(const netadr_t &server, const Str::StringRef& challenge)
+	bool HandleChallenge(const netadr_t& server, const Str::StringRef& challenge)
 	{
 		return queue.Pop(server, challenge);
 	}
@@ -1477,7 +1422,7 @@ static void CL_LoadRSAKeys()
 
 	Log::Notice( "Loading RSA keys from %s" , fileName );
 
-	len = FS_FOpenFileRead( fileName, &f, true );
+	len = FS_FOpenFileRead( fileName, &f );
 
 	if ( !f || len < 1 )
 	{
@@ -1783,10 +1728,8 @@ to the server, the server will send out of band disconnect packets
 to the client so it doesn't have to wait for the full timeout period.
 ===================
 */
-void CL_DisconnectPacket( netadr_t from )
+static void CL_DisconnectPacket( const netadr_t& from )
 {
-	const char *message;
-
 	if ( cls.state < connstate_t::CA_CONNECTING )
 	{
 		return;
@@ -1809,21 +1752,10 @@ void CL_DisconnectPacket( netadr_t from )
 		return;
 	}
 
-	// if we are doing a disconnected download, leave the 'connecting' screen on with the progress information
-	if ( !cls.bWWWDlDisconnected )
-	{
-		// drop the connection
-		message = "Server disconnected for unknown reason";
-		Log::Notice( "%s\n", message );
-		Cvar_Set( "com_errorMessage", message );
-		CL_Disconnect( true );
-	}
-	else
-	{
-		CL_Disconnect( false );
-		Cvar_Set( "ui_connecting", "1" );
-		Cvar_Set( "ui_dl_running", "1" );
-	}
+	// drop the connection
+	const char* message = "Server disconnected for unknown reason";
+	Cvar_Set( "com_errorMessage", message );
+	Sys::Drop( message );
 }
 
 /*
@@ -2101,7 +2033,7 @@ void CL_ServersResponsePacket( const netadr_t *from, msg_t *msg, bool extended )
 		{
 			buffptr++;
 
-			if ( buffend - buffptr < (int) (sizeof( addresses[ numservers ].ip ) + sizeof( addresses[ numservers ].port ) + 1) )
+			if ( buffend - buffptr < (ptrdiff_t) (sizeof( addresses[ numservers ].ip ) + sizeof( addresses[ numservers ].port ) + 1) )
 			{
 				break;
 			}
@@ -2166,7 +2098,7 @@ void CL_ServersResponsePacket( const netadr_t *from, msg_t *msg, bool extended )
 		{
 			buffptr++;
 
-			if ( buffend - buffptr < (int) (sizeof( addresses[ numservers ].ip6 ) + sizeof( addresses[ numservers ].port ) + 1) )
+			if ( buffend - buffptr < (ptrdiff_t) (sizeof( addresses[ numservers ].ip6 ) + sizeof( addresses[ numservers ].port ) + 1) )
 			{
 				break;
 			}
@@ -2293,7 +2225,7 @@ CL_ConnectionlessPacket
 Responses to broadcasts, etc
 =================
 */
-void CL_ConnectionlessPacket( netadr_t from, msg_t *msg )
+static void CL_ConnectionlessPacket( const netadr_t& from, msg_t *msg )
 {
 	MSG_BeginReadingOOB( msg );
 	MSG_ReadLong( msg );  // skip the -1
@@ -2446,7 +2378,7 @@ CL_PacketEvent
 A packet has arrived from the main event loop
 =================
 */
-void CL_PacketEvent( netadr_t from, msg_t *msg )
+void CL_PacketEvent( const netadr_t& from, msg_t *msg )
 {
 	int headerBytes;
 
@@ -2522,9 +2454,9 @@ void CL_CheckTimeout()
 		if ( ++cl.timeoutcount > 5 )
 		{
 			// timeoutcount saves debugger
-			Cvar_Set( "com_errorMessage", "Server connection timed out." );
-			CL_Disconnect( true );
-			return;
+			const char* message = "Server connection timed out.";
+			Cvar_Set( "com_errorMessage", message );
+			Sys::Drop( message );
 		}
 	}
 	else
@@ -2606,7 +2538,7 @@ void CL_Frame( int msec )
 	CL_CheckTimeout();
 
 	// wwwdl download may survive a server disconnect
-	if ( ( cls.state == connstate_t::CA_DOWNLOADING && clc.bWWWDl ) || cls.bWWWDlDisconnected )
+	if ( cls.state == connstate_t::CA_DOWNLOADING && clc.bWWWDl )
 	{
 		CL_WWWDownload();
 	}
@@ -2646,6 +2578,7 @@ void CL_SetRecommended_f()
 	Com_SetRecommended();
 }
 
+static bool CL_InitRef();
 /*
 ============
 CL_InitRenderer
@@ -2653,6 +2586,11 @@ CL_InitRenderer
 */
 bool CL_InitRenderer()
 {
+	if ( !CL_InitRef() )
+	{
+		return false;
+	}
+
 	fileHandle_t f;
 
 	// this sets up the renderer and calls R_Init
@@ -2673,7 +2611,7 @@ bool CL_InitRenderer()
 	// filehandle is unused but forces FS_FOpenFileRead() to heed purecheck because it does not when filehandle is nullptr
 	if ( cl_consoleFont->string[0] )
 	{
-		if ( FS_FOpenFileRead( cl_consoleFont->string, &f, false ) >= 0 )
+		if ( FS_FOpenFileRead( cl_consoleFont->string, &f ) >= 0 )
 		{
 			if ( cl_consoleFontScaling->value == 0 )
 			{
@@ -2728,7 +2666,9 @@ void CL_StartHunkUsers()
 		return;
 	}
 
-	if ( !cls.rendererStarted && CL_InitRef() && CL_InitRenderer() )
+	Cvar::SetLatchedValues();
+
+	if ( !cls.rendererStarted && CL_InitRenderer() )
 	{
 		cls.rendererStarted = true;
 	}
@@ -2788,7 +2728,7 @@ extern refexport_t *GetRefAPI( int apiVersion, refimport_t *rimp );
 CL_InitRef
 ============
 */
-bool CL_InitRef( )
+static bool CL_InitRef()
 {
 	refimport_t ri;
 	refexport_t *ret;
@@ -2834,8 +2774,6 @@ bool CL_InitRef( )
 	ri.CIN_UploadCinematic = CIN_UploadCinematic;
 	ri.CIN_PlayCinematic = CIN_PlayCinematic;
 	ri.CIN_RunCinematic = CIN_RunCinematic;
-
-	ri.CL_WriteAVIVideoFrame = CL_WriteAVIVideoFrame;
 
 	// XreaL BEGIN
 	ri.CL_VideoRecording = CL_VideoRecording;
@@ -2992,7 +2930,6 @@ void CL_Init()
 	Cvar_Get( "name", UNNAMED_PLAYER, CVAR_USERINFO | CVAR_ARCHIVE );
 	cl_rate = Cvar_Get( "rate", "25000", CVAR_USERINFO | CVAR_ARCHIVE );
 	Cvar_Get( "snaps", "40", CVAR_USERINFO  );
-//  Cvar_Get ("sex", "male", CVAR_USERINFO  );
 
 	Cvar_Get( "password", "", CVAR_USERINFO );
 
@@ -3135,7 +3072,7 @@ static void CL_SetServerInfo( serverInfo_t *server, const char *info, int ping )
 	}
 }
 
-static void CL_SetServerInfoByAddress( netadr_t from, const char *info, int ping )
+static void CL_SetServerInfoByAddress( const netadr_t& from, const char *info, int ping )
 {
 	int i;
 
@@ -3169,7 +3106,7 @@ static void CL_SetServerInfoByAddress( netadr_t from, const char *info, int ping
 CL_ServerInfoPacket
 ===================
 */
-void CL_ServerInfoPacket( netadr_t from, msg_t *msg )
+void CL_ServerInfoPacket( const netadr_t& from, msg_t *msg )
 {
 	int  i, type;
 	char info[ MAX_INFO_STRING ];
@@ -3298,7 +3235,7 @@ void CL_ServerInfoPacket( netadr_t from, msg_t *msg )
 CL_GetServerStatus
 ===================
 */
-serverStatus_t *CL_GetServerStatus( netadr_t from )
+static serverStatus_t *CL_GetServerStatus( const netadr_t& from )
 {
 //	serverStatus_t *serverStatus;
 	int i, oldest, oldestTime;
@@ -3423,7 +3360,7 @@ int CL_ServerStatus( const char *serverAddress, char *serverStatusString, int ma
 CL_ServerStatusResponse
 ===================
 */
-void CL_ServerStatusResponse( netadr_t from, msg_t *msg )
+void CL_ServerStatusResponse( const netadr_t& from, msg_t *msg )
 {
 	const char           *s;
 	int            i, score, ping;

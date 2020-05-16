@@ -35,7 +35,11 @@ install:
         liblua5.2-dev ninja-build;
     fi
   - if [ "$TRAVIS_OS_NAME" == "osx" ]; then
-      brew install ccache ninja;
+      brew update;
+      touch BrewFile;
+      echo 'brew "ccache"' >> BrewFile;
+      echo 'brew "ninja"' >> BrewFile;
+      brew bundle;
     fi
   - |
     # workarounds to make ccache work

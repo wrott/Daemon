@@ -1041,13 +1041,6 @@ void CGameVM::CGameDrawActiveFrame(int serverTime,  bool demoPlayback)
 	this->SendMsg<CGameDrawActiveFrameMsg>(serverTime, demoPlayback);
 }
 
-int CGameVM::CGameCrosshairPlayer()
-{
-	int player;
-	this->SendMsg<CGameCrosshairPlayerMsg>(player);
-	return player;
-}
-
 void CGameVM::CGameKeyEvent(Keyboard::Key key, bool down)
 {
 	this->SendMsg<CGameKeyEventMsg>(key, down);
@@ -1188,13 +1181,6 @@ void CGameVM::QVMSyscall(int index, Util::Reader& reader, IPC::Channel& channel)
 			});
 			break;
 
-		case CG_GETCLIPBOARDDATA:
-			IPC::HandleMsg<GetClipboardDataMsg>(channel, std::move(reader), [this] (int len, std::string& data) {
-				// TODO(slipher): Remove GetClipboardDataMsg.
-				data = "";
-			});
-			break;
-
 		case CG_QUOTESTRING:
 			IPC::HandleMsg<QuoteStringMsg>(channel, std::move(reader), [this] (int len, const std::string& input, std::string& output) {
 				std::unique_ptr<char[]> buffer(new char[len]);
@@ -1290,12 +1276,6 @@ void CGameVM::QVMSyscall(int index, Util::Reader& reader, IPC::Channel& channel)
 		case CG_R_REGISTERSHADER:
 			IPC::HandleMsg<Render::RegisterShaderMsg>(channel, std::move(reader), [this] (const std::string& name, int flags, int& handle) {
 				handle = re.RegisterShader(name.c_str(), (RegisterShaderFlags_t) flags);
-			});
-			break;
-
-		case CG_R_REGISTERFONT:
-			IPC::HandleMsg<Render::RegisterFontMsg>(channel, std::move(reader), [this] (const std::string&, const std::string&, int, fontMetrics_t&) {
-				Log::Warn("TODO(0.52): remove");
 			});
 			break;
 
@@ -1425,6 +1405,18 @@ void CGameVM::QVMSyscall(int index, Util::Reader& reader, IPC::Channel& channel)
 			});
 			break;
 
+		case CG_KEY_GETCONSOLEKEYS:
+			IPC::HandleMsg<Keyboard::GetConsoleKeysMsg>(channel, std::move(reader), [this] (std::vector<Keyboard::Key>& keys) {
+				keys = Keyboard::GetConsoleKeys();
+			});
+			break;
+
+		case CG_KEY_SETCONSOLEKEYS:
+			IPC::HandleMsg<Keyboard::SetConsoleKeysMsg>(channel, std::move(reader), [this] (const std::vector<Keyboard::Key>& keys) {
+				Keyboard::SetConsoleKeys(keys);
+			});
+			break;
+
 		case CG_KEY_CLEARCMDBUTTONS:
 			IPC::HandleMsg<Keyboard::ClearCmdButtonsMsg>(channel, std::move(reader), [this] {
 				CL_ClearCmdButtons();
@@ -1522,21 +1514,6 @@ void CGameVM::QVMSyscall(int index, Util::Reader& reader, IPC::Channel& channel)
 			});
 			break;
 
-		case CG_SEND_MESSAGE:
-			IPC::HandleMsg<SendMessageMsg>(channel, std::move(reader), [this](std::vector<uint8_t>) {
-				Log::Warn("unsupported SendMessageMsg");
-			});
-			break;
-
-		case CG_MESSAGE_STATUS:
-			IPC::HandleMsg<MessageStatusMsg>(channel, std::move(reader), [this](messageStatus_t& status) {
-				Log::Warn("unsupported MessageStatusMsg");
-				status = {};
-			});
-			break;
-
-
-
 	default:
 		Sys::Drop("Bad CGame QVM syscall minor number: %d", index);
 	}
@@ -1629,7 +1606,7 @@ void CGameVM::CmdBuffer::HandleCommandBufferSyscall(int major, int minor, Util::
 
 			case CG_S_SETREVERB:
 				HandleMsg<Audio::SetReverbMsg>(std::move(reader), [this] (int slotNum, const std::string& name, float ratio) {
-					Audio::SetReverb(slotNum, name.c_str(), ratio);
+					Audio::SetReverb(slotNum, name, ratio);
 				});
 				break;
 

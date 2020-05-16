@@ -36,7 +36,8 @@ Maryland 20850 USA.
 
 #include "client.h"
 
-static Log::Logger downloadLogger("client.pakDownload");
+Log::Logger downloadLogger("client.pakDownload", "", Log::Level::NOTICE);
+Cvar::Cvar<int> cl_downloadCount("cl_downloadCount", "bytes of a file downloaded", Cvar::NONE, 0);
 
 /*
 =====================
@@ -47,7 +48,6 @@ Clear download information that we keep in cls (disconnected download support)
 void CL_ClearStaticDownload()
 {
 	downloadLogger.Debug("Clearing the download info");
-	ASSERT(!cls.bWWWDlDisconnected);  // reset before calling
 	cls.downloadRestart = false;
 	cls.downloadTempName[ 0 ] = '\0';
 	cls.downloadName[ 0 ] = '\0';
@@ -75,25 +75,14 @@ static void CL_DownloadsComplete()
 		FS::PakPath::ClearPaks();
 		FS_LoadServerPaks(Cvar_VariableString("sv_paks"), clc.demoplaying); // We possibly downloaded a pak, restart the file system to load it
 
-		if ( !cls.bWWWDlDisconnected )
-		{
-			// inform the server so we get new gamestate info
-			CL_AddReliableCommand( "donedl" );
-		}
+		// inform the server so we get new gamestate info
+		CL_AddReliableCommand( "donedl" );
 
 		// we can reset that now
-		cls.bWWWDlDisconnected = false;
 		CL_ClearStaticDownload();
 
 		// by sending the donedl command we request a new gamestate
 		// so we don't want to load stuff yet
-		return;
-	}
-
-	if ( cls.bWWWDlDisconnected )
-	{
-		cls.bWWWDlDisconnected = false;
-		CL_ClearStaticDownload();
 		return;
 	}
 
@@ -112,7 +101,8 @@ static void CL_DownloadsComplete()
 
 	// flush client memory and start loading stuff
 	// this will also (re)load the UI
-	CL_FlushMemory();
+	CL_ShutdownAll();
+	CL_StartHunkUsers();
 
 	// initialize the CGame
 	cls.cgameStarted = true;
@@ -141,7 +131,7 @@ static void CL_BeginDownload( const char *localName, const char *remoteName )
 	// Set so UI gets access to it
 	Cvar_Set( "cl_downloadName", remoteName );
 	Cvar_Set( "cl_downloadSize", "0" );
-	Cvar_Set( "cl_downloadCount", "0" );
+	cl_downloadCount.Set(0);
 	Cvar_SetValue( "cl_downloadTime", cls.realtime );
 
 	clc.downloadBlock = 0; // Starting new file
@@ -223,7 +213,6 @@ void CL_InitDownloads()
 	// init some of the www dl data
 	clc.bWWWDl = false;
 	clc.bWWWDlAborting = false;
-	cls.bWWWDlDisconnected = false;
 	CL_ClearStaticDownload();
 
 	if ( cl_allowDownload->integer )
@@ -293,44 +282,26 @@ void CL_WWWDownload()
 		*cls.downloadTempName = *cls.downloadName = 0;
 		Cvar_Set( "cl_downloadName", "" );
 
-		if ( !cls.bWWWDlDisconnected )
-		{
-			CL_AddReliableCommand( "wwwdl done" );
+		CL_AddReliableCommand( "wwwdl done" );
 
-			// tracking potential web redirects leading us to wrong checksum - only works in connected mode
-			if ( strlen( clc.redirectedList ) + strlen( cls.originalDownloadName ) + 1 >= sizeof( clc.redirectedList ) )
-			{
-				// just to be safe
-				Log::Warn( "redirectedList overflow (%s)\n", clc.redirectedList );
-			}
-			else
-			{
-				strcat( clc.redirectedList, "@" );
-				strcat( clc.redirectedList, cls.originalDownloadName );
-			}
+		// tracking potential web redirects leading us to wrong checksum - only works in connected mode
+		if ( strlen( clc.redirectedList ) + strlen( cls.originalDownloadName ) + 1 >= sizeof( clc.redirectedList ) )
+		{
+			// just to be safe
+			Log::Warn( "redirectedList overflow (%s)\n", clc.redirectedList );
+		}
+		else
+		{
+			strcat( clc.redirectedList, "@" );
+			strcat( clc.redirectedList, cls.originalDownloadName );
 		}
 	}
 	else
 	{
-		if ( cls.bWWWDlDisconnected )
-		{
-			// in a connected download, we'd tell the server about failure and wait for a reply
-			// but in this case we can't get anything from server
-			// if we just reconnect it's likely we'll get the same disconnected download message, and error out again
-			// this may happen for a regular dl or an auto update
-			const char *error = va( "Download failure while getting '%s'\n", cls.downloadName );  // get the msg before clearing structs
-
-			cls.bWWWDlDisconnected = false; // need clearing structs before ERR_DROP, or it goes into endless reload
-			CL_ClearStaticDownload();
-			Sys::Drop( "%s", error );
-		}
-		else
-		{
-			// see CL_ParseDownload, same abort strategy
-			Log::Notice( "Download failure while getting '%s'\n", cls.downloadName );
-			CL_AddReliableCommand( "wwwdl fail" );
-			clc.bWWWDlAborting = true;
-		}
+		// see CL_ParseDownload, same abort strategy
+		Log::Notice( "Download failure while getting '%s'\n", cls.downloadName );
+		CL_AddReliableCommand( "wwwdl fail" );
+		clc.bWWWDlAborting = true;
 
 		return;
 	}
@@ -418,10 +389,10 @@ void CL_ParseDownload( msg_t *msg )
 			Q_strncpyz( cls.originalDownloadName, cls.downloadName, sizeof( cls.originalDownloadName ) );
 			Q_strncpyz( cls.downloadName, MSG_ReadString( msg ), sizeof( cls.downloadName ) );
 			clc.downloadSize = MSG_ReadLong( msg );
-			clc.downloadFlags = MSG_ReadLong( msg );
+			int basePathLen = MSG_ReadLong( msg );
 
-			downloadLogger.Debug("Server sent us a new WWW DL '%s', size %i, flags %i",
-			                     cls.downloadName, clc.downloadSize, clc.downloadFlags);
+			downloadLogger.Debug("Server sent us a new WWW DL '%s', size %i, prefix len %i",
+			                     cls.downloadName, clc.downloadSize, basePathLen);
 
 			Cvar_SetValue( "cl_downloadSize", clc.downloadSize );
 			clc.bWWWDl = true; // activate wwwdl client loop
@@ -437,7 +408,7 @@ void CL_ParseDownload( msg_t *msg )
 				return;
 			}
 
-			if ( !DL_BeginDownload( cls.downloadTempName, cls.downloadName ) )
+			if ( !DL_BeginDownload( cls.downloadTempName, cls.downloadName, basePathLen ) )
 			{
 				// setting bWWWDl to false after sending the wwwdl fail doesn't work
 				// not sure why, but I suspect we have to eat all remaining block -1 that the server has sent us
@@ -446,14 +417,6 @@ void CL_ParseDownload( msg_t *msg )
 				CL_AddReliableCommand( "wwwdl fail" );
 				clc.bWWWDlAborting = true;
 				Log::Notice( "Failed to initialize download for '%s'\n", cls.downloadName );
-			}
-
-			// Check for a disconnected download
-			// we'll let the server disconnect us when it gets the bbl8r message
-			if ( clc.downloadFlags & DL_FLAG_DISCON )
-			{
-				CL_AddReliableCommand( "wwwdl bbl8r" );
-				cls.bWWWDlDisconnected = true;
 			}
 
 			return;
@@ -525,7 +488,7 @@ void CL_ParseDownload( msg_t *msg )
 	clc.downloadCount += size;
 
 	// So UI gets access to it
-	Cvar_SetValue( "cl_downloadCount", clc.downloadCount );
+	cl_downloadCount.Set(clc.downloadCount);
 
 	if ( !size )
 	{

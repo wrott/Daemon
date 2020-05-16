@@ -833,13 +833,13 @@ static void ParseFace( dsurface_t *ds, drawVert_t *verts, bspSurface_t *surf, in
 	// get lightmap
 	realLightmapNum = LittleLong( ds->lightmapNum );
 
-	if ( r_vertexLighting->integer || !r_precomputedLighting->integer )
+	if ( r_precomputedLighting->integer && ( !r_vertexLighting->integer || ( r_deluxeMapping->integer && tr.worldDeluxeMapping ) ) )
 	{
-		surf->lightmapNum = -1;
+		surf->lightmapNum = tr.fatLightmapSize ? 0 : realLightmapNum;
 	}
 	else
 	{
-		surf->lightmapNum = tr.fatLightmapSize ? 0 : realLightmapNum;
+		surf->lightmapNum = -1;
 	}
 
 	if ( tr.worldDeluxeMapping && surf->lightmapNum >= 2 )
@@ -955,7 +955,23 @@ static void ParseFace( dsurface_t *ds, drawVert_t *verts, bspSurface_t *surf, in
 	for( i = 0; i < numVerts; i++ ) {
 		if( components[ i ].minVertex == i ) {
 			for( j = 0; j < 2; j++ ) {
-				components[ i ].stBounds[ 0 ][ j ] = rintf( 0.5f * (components[ i ].stBounds[ 1 ][ j ] + components[ i ].stBounds[ 0 ][ j ]) );
+				/* Some words about the “minus 0.5” trick:
+				 *
+				 * The vertexpack engine tries to optimize texture coords, because fp16 numbers have 1/2048 resolution only between -1.0 and 1.0,
+				 * and so we could have several texel rounding errors if the coords are too large. The optimization finds connected surfaces and
+				 * then shifts the texture coords so that their average value is near 0. If the range is 0-1, there are two equally good solutions,
+				 * either keep the range 0-1 or shift to -1-0, and in this case tiny rounding errors decide which one is used.
+				 * For non-animated textures this is no issue, but the rotating textures always rotate around 0.5/0.5, and if the texture coords
+				 * are shifted, it shifts the rotation center too. The easy fix is to move the average as close as possible to 0.5 instead of 0.0,
+				 * then all standard 0-1 textures will not be shifted.
+				 * -- @gimhael https://github.com/DaemonEngine/Daemon/issues/35#issuecomment-507406783
+				 *
+				 * Instead of round(x - 0.5) we can do floor(x). (using std::floorf)
+				 * Surprisingly to me, rintf is apparently a builtin in gcc (so is floorf, but not roundf).
+				 * And rounding x - 0.5 actually generates fewer instructions. So it looks like the original version is pretty great.
+				 * -- @slipher https://github.com/DaemonEngine/Daemon/pull/208#discussion_r299864660
+				 */
+				components[ i ].stBounds[ 0 ][ j ] = rintf( 0.5f * (components[ i ].stBounds[ 1 ][ j ] + components[ i ].stBounds[ 0 ][ j ]) - 0.5f );
 			}
 		}
 
@@ -1025,13 +1041,13 @@ static void ParseMesh( dsurface_t *ds, drawVert_t *verts, bspSurface_t *surf )
 	// get lightmap
 	realLightmapNum = LittleLong( ds->lightmapNum );
 
-	if ( r_vertexLighting->integer || !r_precomputedLighting->integer )
+	if ( r_precomputedLighting->integer && ( !r_vertexLighting->integer || ( r_deluxeMapping->integer && tr.worldDeluxeMapping ) ) )
 	{
-		surf->lightmapNum = -1;
+		surf->lightmapNum = tr.fatLightmapSize ? 0 : realLightmapNum;
 	}
 	else
 	{
-		surf->lightmapNum = tr.fatLightmapSize ? 0 : realLightmapNum;
+		surf->lightmapNum = -1;
 	}
 
 	if ( tr.worldDeluxeMapping && surf->lightmapNum >= 2 )
@@ -1270,7 +1286,13 @@ static void ParseTriSurf( dsurface_t *ds, drawVert_t *verts, bspSurface_t *surf,
 	for( i = 0; i < numVerts; i++ ) {
 		if( components[ i ].minVertex == i ) {
 			for( j = 0; j < 2; j++ ) {
-				components[ i ].stBounds[ 0 ][ j ] = rintf( 0.5f * (components[ i ].stBounds[ 1 ][ j ] + components[ i ].stBounds[ 0 ][ j ]) );
+				/* Reuse the “minus 0.5” trick:
+				 *
+				 * This is the loader for triangle meshes, there are probably no rotating textures on triangle meshes,
+				 * but it's better to keep it consistent.
+				 * -- @gimhael https://github.com/DaemonEngine/Daemon/pull/208#discussion_r299809045
+				 */
+				components[ i ].stBounds[ 0 ][ j ] = rintf( 0.5f * (components[ i ].stBounds[ 1 ][ j ] + components[ i ].stBounds[ 0 ][ j ]) - 0.5f );
 			}
 		}
 
@@ -3606,7 +3628,7 @@ static void R_LoadShaders( lump_t *l )
 
 	for ( i = 0; i < count; i++ )
 	{
-		Log::Debug("shader: '%s'", out[ i ].shader );
+		Log::Debug("loading shader: '%s'", out[ i ].shader );
 
 		out[ i ].surfaceFlags = LittleLong( out[ i ].surfaceFlags );
 		out[ i ].contentFlags = LittleLong( out[ i ].contentFlags );
@@ -3925,14 +3947,14 @@ void R_LoadLightGrid( lump_t *l )
 		gridPoint2 = (bspGridPoint2_t *) (gridPoint1 + w->numLightGridPoints);
 
 		// default some white light from above
-		gridPoint1->ambient[ 0 ] = 32;
-		gridPoint1->ambient[ 1 ] = 32;
-		gridPoint1->ambient[ 2 ] = 32;
-		gridPoint2->directed[ 0 ] = 96;
-		gridPoint2->directed[ 1 ] = 96;
-		gridPoint2->directed[ 2 ] = 96;
-		gridPoint1->lightVecX = 128;
-		gridPoint2->lightVecY = 128;
+		gridPoint1->color[ 0 ] = 64;
+		gridPoint1->color[ 1 ] = 64;
+		gridPoint1->color[ 2 ] = 64;
+		gridPoint1->ambientPart = 128;
+		gridPoint2->direction[ 0 ] = floatToSnorm8(0.0f);
+		gridPoint2->direction[ 1 ] = floatToSnorm8(0.0f);
+		gridPoint2->direction[ 2 ] = floatToSnorm8(1.0f);
+		gridPoint2->unused = 0;
 
 		w->lightGridData1 = gridPoint1;
 		w->lightGridData2 = gridPoint2;
@@ -4007,52 +4029,15 @@ void R_LoadLightGrid( lump_t *l )
 		direction[ 2 ] = cos( lng );
 
 		// Pack data into an bspGridPoint
-		gridPoint1->ambient[ 0 ] = floatToUnorm8( ambientColor[ 0 ] );
-		gridPoint1->ambient[ 1 ] = floatToUnorm8( ambientColor[ 1 ] );
-		gridPoint1->ambient[ 2 ] = floatToUnorm8( ambientColor[ 2 ] );
-		gridPoint2->directed[ 0 ] = floatToUnorm8( directedColor[ 0 ] );
-		gridPoint2->directed[ 1 ] = floatToUnorm8( directedColor[ 1 ] );
-		gridPoint2->directed[ 2 ] = floatToUnorm8( directedColor[ 2 ] );
+		gridPoint1->color[ 0 ] = floatToUnorm8( 0.5f * (ambientColor[ 0 ] + directedColor[ 0 ]) );
+		gridPoint1->color[ 1 ] = floatToUnorm8( 0.5f * (ambientColor[ 1 ] + directedColor[ 1 ]) );
+		gridPoint1->color[ 2 ] = floatToUnorm8( 0.5f * (ambientColor[ 2 ] + directedColor[ 2 ]) );
+		gridPoint1->ambientPart = floatToUnorm8( VectorLength(ambientColor) / (VectorLength(ambientColor) + VectorLength(directedColor)) );
 
-		// Light direction vectors have to be stored in two bytes:
-		// First the vector is projected onto a unit octahedron, that means |x| + |y| + |z| = 1,
-		// then it is projected onto the x/y plane. The magnitude of z can be reconstructed by
-		// the above identity, but not the sign.
-		// Fortunately the identity implies |x| + |y| <= 1, so all vectors fall within a diamond
-		// shape within the unit square that covers exactly half of the area:
-		//
-		//           +-----+-----+
-		//           |    /|\    |
-		//           |   /#|#\   |
-		//           |  /##|##\  |
-		//           | /###|###\ |
-		//           |/####|####\|
-		//           +-----+-----+
-		//           |\####|####/|
-		//           | \###|###/ |
-		//           |  \##|##/  |
-		//           |   \#|#/   |
-		//           |    \|/    |
-		//           +-----+-----+
-		//
-		// If z >= 0, we keep just the x,y coordinates in the diamond, otherwise the point
-		// is flipped across the nearest diamond edge into one of the outer triangles.
-
-		// The interpolation in this format behaves quite good except when interpolating
-		// two points that are in different outer triangles.
-
-		scale = fabsf( direction[ 0 ] ) + fabsf( direction[ 1 ] ) + fabsf( direction[ 2 ] );
-		if( scale > 0.0f ) {
-			VectorScale( direction, 1.0f / scale, direction );
-			if( direction[ 2 ] < 0.0f ) {
-				float X = direction[ 0 ];
-				float Y = direction[ 1 ];
-				direction[ 0 ] = copysignf( 1.0f - fabs( Y ), X );
-				direction[ 1 ] = copysignf( 1.0f - fabs( X ), Y );
-			}
-		}
-		gridPoint1->lightVecX = 128 + floatToSnorm8( direction[ 0 ] );
-		gridPoint2->lightVecY = 128 + floatToSnorm8( direction[ 1 ] );
+		gridPoint2->direction[0] = 128 + floatToSnorm8( direction[ 0 ] );
+		gridPoint2->direction[1] = 128 + floatToSnorm8( direction[ 1 ] );
+		gridPoint2->direction[2] = 128 + floatToSnorm8( direction[ 2 ] );
+		gridPoint2->unused = 0;
 	}
 
 	// fill in gridpoints with zero light (samples in walls) to avoid
@@ -4073,9 +4058,9 @@ void R_LoadLightGrid( lump_t *l )
 				from[ 0 ] = i - 1;
 				to[ 0 ] = i + 1;
 
-				if( gridPoint1->ambient[ 0 ] ||
-				    gridPoint1->ambient[ 1 ] ||
-				    gridPoint1->ambient[ 2 ] )
+				if( gridPoint1->color[ 0 ] ||
+				    gridPoint1->color[ 1 ] ||
+				    gridPoint1->color[ 2 ] )
 					continue;
 
 				scale = R_InterpolateLightGrid( w, from, to, factors,
@@ -4088,14 +4073,16 @@ void R_LoadLightGrid( lump_t *l )
 					VectorScale( directedColor, scale, directedColor );
 					VectorScale( direction, scale, direction );
 
-					gridPoint1->ambient[ 0 ] = floatToUnorm8( ambientColor[ 0 ] );
-					gridPoint1->ambient[ 1 ] = floatToUnorm8( ambientColor[ 1 ] );
-					gridPoint1->ambient[ 2 ] = floatToUnorm8( ambientColor[ 2 ] );
-					gridPoint1->lightVecX = 128 + floatToSnorm8( direction[ 0 ] );
-					gridPoint2->directed[ 0 ] = floatToUnorm8( directedColor[ 0 ] );
-					gridPoint2->directed[ 1 ] = floatToUnorm8( directedColor[ 1 ] );
-					gridPoint2->directed[ 2 ] = floatToUnorm8( directedColor[ 2 ] );
-					gridPoint2->lightVecY = 128 + floatToSnorm8( direction[ 1 ] );
+
+					gridPoint1->color[0] = floatToUnorm8(0.5f * (ambientColor[0] + directedColor[0]));
+					gridPoint1->color[1] = floatToUnorm8(0.5f * (ambientColor[1] + directedColor[1]));
+					gridPoint1->color[2] = floatToUnorm8(0.5f * (ambientColor[2] + directedColor[2]));
+					gridPoint1->ambientPart = floatToUnorm8(VectorLength(ambientColor) / (VectorLength(ambientColor) + VectorLength(directedColor)));
+
+					gridPoint2->direction[0] = 128 + floatToSnorm8(direction[0]);
+					gridPoint2->direction[1] = 128 + floatToSnorm8(direction[1]);
+					gridPoint2->direction[2] = 128 + floatToSnorm8(direction[2]);
+					gridPoint2->unused = 0;
 				}
 			}
 		}
@@ -5367,13 +5354,11 @@ static void R_CreateVBOShadowMeshes( trRefLight_t *light )
 
 	// create a VBO for each shader
 	shader = oldShader = nullptr;
-	oldAlphaTest = alphaTest = -1;
+	oldAlphaTest = alphaTest = true;
 
 	for ( k = 0; k < numCaches; k++ )
 	{
 		iaCache = iaCachesSorted[ k ];
-
-		iaCache->mergedIntoVBO = true;
 
 		shader = iaCache->surface->shader;
 		alphaTest = shader->alphaTest;
@@ -6361,6 +6346,14 @@ void R_BuildCubeMaps()
 	int    startTime, endTime;
 	size_t tics = 0;
 	int nextTicCount = 0;
+
+	// Early abort if a BSP is not loaded yet since
+	// the buildcubemaps command can be called from
+	// everywhere including the main menu.
+	if ( tr.world == nullptr )
+	{
+		return;
+	}
 
 	startTime = ri.Milliseconds();
 

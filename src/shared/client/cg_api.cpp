@@ -109,13 +109,6 @@ void trap_RegisterButtonCommands( const char *cmds )
 	VM::SendMsg<RegisterButtonCommandsMsg>(cmds);
 }
 
-void trap_GetClipboardData( char *buf, int bufsize )
-{
-	std::string data;
-	VM::SendMsg<GetClipboardDataMsg>(bufsize, data);
-	Q_strncpyz(buf, data.c_str(), bufsize);
-}
-
 void trap_QuoteString( const char *str, char *buffer, int size )
 {
 	std::string quoted;
@@ -308,11 +301,6 @@ qhandle_t trap_R_RegisterShader( const char *name, RegisterShaderFlags_t flags )
 	int handle;
 	VM::SendMsg<Render::RegisterShaderMsg>(name, flags, handle);
 	return handle;
-}
-
-void trap_R_RegisterFont( const char *fontName, const char *fallbackName, int pointSize, fontMetrics_t *font )
-{
-	VM::SendMsg<Render::RegisterFontMsg>(fontName, fallbackName, pointSize, *font);
 }
 
 void trap_R_ClearScene()
@@ -589,6 +577,18 @@ int trap_Key_GetCharForScancode( int scancode )
 void trap_Key_SetBinding( Keyboard::Key key, int team, const char *cmd )
 {
 	VM::SendMsg<Keyboard::SetBindingMsg>(key, team, cmd);
+}
+
+std::vector<Keyboard::Key> trap_Key_GetConsoleKeys()
+{
+	std::vector<Keyboard::Key> result;
+	VM::SendMsg<Keyboard::GetConsoleKeysMsg>(result);
+	return result;
+}
+
+void trap_Key_SetConsoleKeys(const std::vector<Keyboard::Key>& keys)
+{
+	VM::SendMsg<Keyboard::SetConsoleKeysMsg>(keys);
 }
 
 void trap_Key_ClearCmdButtons()

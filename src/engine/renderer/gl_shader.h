@@ -75,7 +75,7 @@ private:
 	GLShaderManager               *_shaderManager;
 
 public:
-	GLHeader() : _name(""), _text(""), _shaderManager(nullptr)
+	GLHeader() : _name(), _text(), _shaderManager(nullptr)
 	{}
 
 	GLHeader( const std::string &name, const std::string &text, GLShaderManager *manager ) :
@@ -778,13 +778,16 @@ protected:
 // It also works regardless of RTTI is enabled or not.
 	enum EGLCompileMacro
 	{
+	  USE_BSP_SURFACE,
 	  USE_VERTEX_SKINNING,
 	  USE_VERTEX_ANIMATION,
 	  USE_VERTEX_SPRITE,
 	  USE_TCGEN_ENVIRONMENT,
 	  USE_TCGEN_LIGHTMAP,
+	  USE_LIGHT_MAPPING,
 	  USE_DELUXE_MAPPING,
-	  USE_PARALLAX_MAPPING,
+	  USE_HEIGHTMAP_IN_NORMALMAP,
+	  USE_RELIEF_MAPPING,
 	  USE_REFLECTIVE_SPECULAR,
 	  USE_SHADOWING,
 	  LIGHT_DIRECTIONAL,
@@ -834,6 +837,31 @@ public:
 	}
 
 	virtual ~GLCompileMacro() = default;
+};
+
+class GLCompileMacro_USE_BSP_SURFACE :
+	GLCompileMacro
+{
+public:
+	GLCompileMacro_USE_BSP_SURFACE( GLShader *shader ) :
+		GLCompileMacro( shader )
+	{
+	}
+
+	const char *GetName() const
+	{
+		return "USE_BSP_SURFACE";
+	}
+
+	EGLCompileMacro GetType() const
+	{
+		return EGLCompileMacro::USE_BSP_SURFACE;
+	}
+
+	void SetBspSurface( bool enable )
+	{
+		SetMacro( enable );
+	}
 };
 
 class GLCompileMacro_USE_VERTEX_SKINNING :
@@ -984,6 +1012,31 @@ public:
 	}
 };
 
+class GLCompileMacro_USE_LIGHT_MAPPING :
+	GLCompileMacro
+{
+public:
+	GLCompileMacro_USE_LIGHT_MAPPING( GLShader *shader ) :
+		GLCompileMacro( shader )
+	{
+	}
+
+	const char *GetName() const
+	{
+		return "USE_LIGHT_MAPPING";
+	}
+
+	EGLCompileMacro GetType() const
+	{
+		return EGLCompileMacro::USE_LIGHT_MAPPING;
+	}
+
+	void SetLightMapping( bool enable )
+	{
+		SetMacro( enable );
+	}
+};
+
 class GLCompileMacro_USE_DELUXE_MAPPING :
 	GLCompileMacro
 {
@@ -1009,26 +1062,51 @@ public:
 	}
 };
 
-class GLCompileMacro_USE_PARALLAX_MAPPING :
+class GLCompileMacro_USE_HEIGHTMAP_IN_NORMALMAP :
 	GLCompileMacro
 {
 public:
-	GLCompileMacro_USE_PARALLAX_MAPPING( GLShader *shader ) :
+	GLCompileMacro_USE_HEIGHTMAP_IN_NORMALMAP( GLShader *shader ) :
 		GLCompileMacro( shader )
 	{
 	}
 
 	const char *GetName() const
 	{
-		return "USE_PARALLAX_MAPPING";
+		return "USE_HEIGHTMAP_IN_NORMALMAP";
 	}
 
 	EGLCompileMacro GetType() const
 	{
-		return EGLCompileMacro::USE_PARALLAX_MAPPING;
+		return EGLCompileMacro::USE_HEIGHTMAP_IN_NORMALMAP;
 	}
 
-	void SetParallaxMapping( bool enable )
+	void SetHeightMapInNormalMap( bool enable )
+	{
+		SetMacro( enable );
+	}
+};
+
+class GLCompileMacro_USE_RELIEF_MAPPING :
+	GLCompileMacro
+{
+public:
+	GLCompileMacro_USE_RELIEF_MAPPING( GLShader *shader ) :
+		GLCompileMacro( shader )
+	{
+	}
+
+	const char *GetName() const
+	{
+		return "USE_RELIEF_MAPPING";
+	}
+
+	EGLCompileMacro GetType() const
+	{
+		return EGLCompileMacro::USE_RELIEF_MAPPING;
+	}
+
+	void SetReliefMapping( bool enable )
 	{
 		SetMacro( enable );
 	}
@@ -1217,7 +1295,27 @@ public:
 
 		switch( stateBits & GLS_ATEST_BITS ) {
 			case GLS_ATEST_GT_0:
-				value = 1.0f;
+				if ( *r_dpBlend )
+				{
+					// DarkPlaces only supports one alphaFunc operation:
+					//   https://gitlab.com/xonotic/darkplaces/blob/324a5329d33ef90df59e6488abce6433d90ac04c/model_shared.c#L1875-1876
+					// Which is GE128:
+					//   https://gitlab.com/xonotic/darkplaces/blob/0ea8f691e05ea968bb8940942197fa627966ff99/render.h#L95
+					// Because of that, people may silently introduce regressions in their textures
+					// designed for GT0 by compressing them using a lossy picture format like Jpg.
+					// Xonotic texture known to trigger this bug:
+					//   models/desertfactory/textures/shaders/grass01
+					// Using GE128 instead would hide Jpeg artifacts while not breaking that much
+					// non-DarkPlaces GT0.
+					// No one operation other than GT0 an GE128 was found in whole Xonotic corpus,
+					// so if there is other operations used in third party maps, they were broken
+					// on DarkPlaces and will work there.
+					value = 0.5f;
+				}
+				else
+				{
+					value = 1.0f;
+				}
 				break;
 			case GLS_ATEST_LT_128:
 				value = -1.5f;
@@ -1511,30 +1609,15 @@ public:
 };
 
 class u_NormalScale :
-	GLUniform1f
-{
-public:
-	u_NormalScale( GLShader *shader ) :
-		GLUniform1f( shader, "u_NormalScale" )
-	{
-	}
-
-	void SetUniform_NormalScale( float value )
-	{
-		this->SetValue( value );
-	}
-};
-
-class u_NormalFormat :
 	GLUniform3f
 {
 public:
-	u_NormalFormat( GLShader *shader ) :
-		GLUniform3f( shader, "u_NormalFormat" )
+	u_NormalScale( GLShader *shader ) :
+		GLUniform3f( shader, "u_NormalScale" )
 	{
 	}
 
-	void SetUniform_NormalFormat( const vec3_t value )
+	void SetUniform_NormalScale( const vec3_t value )
 	{
 		this->SetValue( value );
 	}
@@ -1751,46 +1834,31 @@ public:
 	}
 };
 
-class u_ParallaxDepthScale :
+class u_ReliefDepthScale :
 	GLUniform1f
 {
 public:
-	u_ParallaxDepthScale( GLShader *shader ) :
-		GLUniform1f( shader, "u_ParallaxDepthScale" )
+	u_ReliefDepthScale( GLShader *shader ) :
+		GLUniform1f( shader, "u_ReliefDepthScale" )
 	{
 	}
 
-	void SetUniform_ParallaxDepthScale( float value )
+	void SetUniform_ReliefDepthScale( float value )
 	{
 		this->SetValue( value );
 	}
 };
 
-class u_ParallaxOffsetBias :
+class u_ReliefOffsetBias :
 	GLUniform1f
 {
 public:
-	u_ParallaxOffsetBias( GLShader *shader ) :
-		GLUniform1f( shader, "u_ParallaxOffsetBias" )
+	u_ReliefOffsetBias( GLShader *shader ) :
+		GLUniform1f( shader, "u_ReliefOffsetBias" )
 	{
 	}
 
-	void SetUniform_ParallaxOffsetBias( float value )
-	{
-		this->SetValue( value );
-	}
-};
-
-class u_HeightMapInNormalMap :
-	GLUniform1i
-{
-public:
-	u_HeightMapInNormalMap( GLShader *shader ) :
-		GLUniform1i( shader, "u_HeightMapInNormalMap" )
-	{
-	}
-
-	void SetUniform_HeightMapInNormalMap( int value )
+	void SetUniform_ReliefOffsetBias( float value )
 	{
 		this->SetValue( value );
 	}
@@ -2159,84 +2227,30 @@ class GLShader_lightMapping :
 	public u_ViewOrigin,
 	public u_ModelMatrix,
 	public u_ModelViewProjectionMatrix,
-	public u_ParallaxDepthScale,
-	public u_ParallaxOffsetBias,
-	public u_HeightMapInNormalMap,
-	public u_NormalFormat,
-	public u_numLights,
-	public u_Lights,
-	public GLDeformStage,
-	public GLCompileMacro_USE_DELUXE_MAPPING,
-	public GLCompileMacro_USE_PARALLAX_MAPPING,
-	public GLCompileMacro_USE_PHYSICAL_SHADING
-{
-public:
-	GLShader_lightMapping( GLShaderManager *manager );
-	void BuildShaderVertexLibNames( std::string& vertexInlines );
-	void BuildShaderFragmentLibNames( std::string& fragmentInlines );
-	void BuildShaderCompileMacros( std::string& compileMacros );
-	void SetShaderProgramUniforms( shaderProgram_t *shaderProgram );
-};
-
-class GLShader_vertexLighting_DBS_entity :
-	public GLShader,
-	public u_TextureMatrix,
-	public u_SpecularExponent,
-	public u_AlphaThreshold,
-	public u_ViewOrigin,
-	public u_ModelMatrix,
-	public u_ModelViewProjectionMatrix,
 	public u_Bones,
 	public u_VertexInterpolation,
-	public u_ParallaxDepthScale,
-	public u_ParallaxOffsetBias,
-	public u_HeightMapInNormalMap,
-	public u_NormalFormat,
+	public u_ReliefDepthScale,
+	public u_ReliefOffsetBias,
+	public u_NormalScale,
 	public u_EnvironmentInterpolation,
-	public u_LightGridOrigin,
-	public u_LightGridScale,
-	public u_numLights,
-	public u_Lights,
-	public GLDeformStage,
-	public GLCompileMacro_USE_VERTEX_SKINNING,
-	public GLCompileMacro_USE_VERTEX_ANIMATION,
-	public GLCompileMacro_USE_PARALLAX_MAPPING,
-	public GLCompileMacro_USE_REFLECTIVE_SPECULAR,
-	public GLCompileMacro_USE_PHYSICAL_SHADING
-{
-public:
-	GLShader_vertexLighting_DBS_entity( GLShaderManager *manager );
-	void BuildShaderVertexLibNames( std::string& vertexInlines );
-	void BuildShaderFragmentLibNames( std::string& fragmentInlines );
-	void BuildShaderCompileMacros( std::string& compileMacros );
-	void SetShaderProgramUniforms( shaderProgram_t *shaderProgram );
-};
-
-class GLShader_vertexLighting_DBS_world :
-	public GLShader,
-	public u_TextureMatrix,
-	public u_SpecularExponent,
-	public u_ColorModulate,
-	public u_Color,
-	public u_AlphaThreshold,
-	public u_ViewOrigin,
-	public u_ModelMatrix,
-	public u_ModelViewProjectionMatrix,
-	public u_ParallaxDepthScale,
-	public u_ParallaxOffsetBias,
-	public u_HeightMapInNormalMap,
-	public u_NormalFormat,
 	public u_LightWrapAround,
 	public u_LightGridOrigin,
 	public u_LightGridScale,
 	public u_numLights,
 	public u_Lights,
 	public GLDeformStage,
-	public GLCompileMacro_USE_PARALLAX_MAPPING,
+	public GLCompileMacro_USE_BSP_SURFACE,
+	public GLCompileMacro_USE_VERTEX_SKINNING,
+	public GLCompileMacro_USE_VERTEX_ANIMATION,
+	public GLCompileMacro_USE_LIGHT_MAPPING,
+	public GLCompileMacro_USE_DELUXE_MAPPING,
+	public GLCompileMacro_USE_HEIGHTMAP_IN_NORMALMAP,
+	public GLCompileMacro_USE_RELIEF_MAPPING,
+	public GLCompileMacro_USE_REFLECTIVE_SPECULAR,
 	public GLCompileMacro_USE_PHYSICAL_SHADING
 {
 public:
-	GLShader_vertexLighting_DBS_world( GLShaderManager *manager );
+	GLShader_lightMapping( GLShaderManager *manager );
 	void BuildShaderVertexLibNames( std::string& vertexInlines );
 	void BuildShaderFragmentLibNames( std::string& fragmentInlines );
 	void BuildShaderCompileMacros( std::string& compileMacros );
@@ -2263,14 +2277,14 @@ class GLShader_forwardLighting_omniXYZ :
 	public u_ModelViewProjectionMatrix,
 	public u_Bones,
 	public u_VertexInterpolation,
-	public u_ParallaxDepthScale,
-	public u_ParallaxOffsetBias,
-	public u_HeightMapInNormalMap,
-	public u_NormalFormat,
+	public u_ReliefDepthScale,
+	public u_ReliefOffsetBias,
+	public u_NormalScale,
 	public GLDeformStage,
 	public GLCompileMacro_USE_VERTEX_SKINNING,
 	public GLCompileMacro_USE_VERTEX_ANIMATION,
-	public GLCompileMacro_USE_PARALLAX_MAPPING,
+	public GLCompileMacro_USE_HEIGHTMAP_IN_NORMALMAP,
+	public GLCompileMacro_USE_RELIEF_MAPPING,
 	public GLCompileMacro_USE_SHADOWING //,
 {
 public:
@@ -2302,14 +2316,14 @@ class GLShader_forwardLighting_projXYZ :
 	public u_ModelViewProjectionMatrix,
 	public u_Bones,
 	public u_VertexInterpolation,
-	public u_ParallaxDepthScale,
-	public u_ParallaxOffsetBias,
-	public u_HeightMapInNormalMap,
-	public u_NormalFormat,
+	public u_ReliefDepthScale,
+	public u_ReliefOffsetBias,
+	public u_NormalScale,
 	public GLDeformStage,
 	public GLCompileMacro_USE_VERTEX_SKINNING,
 	public GLCompileMacro_USE_VERTEX_ANIMATION,
-	public GLCompileMacro_USE_PARALLAX_MAPPING,
+	public GLCompileMacro_USE_HEIGHTMAP_IN_NORMALMAP,
+	public GLCompileMacro_USE_RELIEF_MAPPING,
 	public GLCompileMacro_USE_SHADOWING //,
 {
 public:
@@ -2343,14 +2357,14 @@ class GLShader_forwardLighting_directionalSun :
 	public u_ModelViewProjectionMatrix,
 	public u_Bones,
 	public u_VertexInterpolation,
-	public u_ParallaxDepthScale,
-	public u_ParallaxOffsetBias,
-	public u_HeightMapInNormalMap,
-	public u_NormalFormat,
+	public u_ReliefDepthScale,
+	public u_ReliefOffsetBias,
+	public u_NormalScale,
 	public GLDeformStage,
 	public GLCompileMacro_USE_VERTEX_SKINNING,
 	public GLCompileMacro_USE_VERTEX_ANIMATION,
-	public GLCompileMacro_USE_PARALLAX_MAPPING,
+	public GLCompileMacro_USE_HEIGHTMAP_IN_NORMALMAP,
+	public GLCompileMacro_USE_RELIEF_MAPPING,
 	public GLCompileMacro_USE_SHADOWING //,
 {
 public:
@@ -2391,16 +2405,15 @@ class GLShader_reflection :
 	public u_ModelMatrix,
 	public u_ModelViewProjectionMatrix,
 	public u_Bones,
-	public u_ParallaxDepthScale,
-	public u_ParallaxOffsetBias,
-	public u_HeightMapInNormalMap,
+	public u_ReliefDepthScale,
+	public u_ReliefOffsetBias,
 	public u_NormalScale,
-	public u_NormalFormat,
 	public u_VertexInterpolation,
 	public GLDeformStage,
 	public GLCompileMacro_USE_VERTEX_SKINNING,
 	public GLCompileMacro_USE_VERTEX_ANIMATION,
-	public GLCompileMacro_USE_PARALLAX_MAPPING
+	public GLCompileMacro_USE_HEIGHTMAP_IN_NORMALMAP,
+	public GLCompileMacro_USE_RELIEF_MAPPING
 {
 public:
 	GLShader_reflection( GLShaderManager *manager );
@@ -2472,7 +2485,7 @@ class GLShader_heatHaze :
 	public u_ColorModulate,
 	public u_Color,
 	public u_Bones,
-	public u_NormalFormat,
+	public u_NormalScale,
 	public u_VertexInterpolation,
 	public GLDeformStage,
 	public GLCompileMacro_USE_VERTEX_SKINNING,
@@ -2598,17 +2611,16 @@ class GLShader_liquid :
 	public u_FresnelPower,
 	public u_FresnelScale,
 	public u_FresnelBias,
-	public u_ParallaxDepthScale,
-	public u_ParallaxOffsetBias,
-	public u_HeightMapInNormalMap,
+	public u_ReliefDepthScale,
+	public u_ReliefOffsetBias,
 	public u_NormalScale,
-	public u_NormalFormat,
 	public u_FogDensity,
 	public u_FogColor,
 	public u_SpecularExponent,
 	public u_LightGridOrigin,
 	public u_LightGridScale,
-	public GLCompileMacro_USE_PARALLAX_MAPPING
+	public GLCompileMacro_USE_HEIGHTMAP_IN_NORMALMAP,
+	public GLCompileMacro_USE_RELIEF_MAPPING
 {
 public:
 	GLShader_liquid( GLShaderManager *manager );
@@ -2692,8 +2704,6 @@ extern ShaderKind shaderKind;
 
 extern GLShader_generic                         *gl_genericShader;
 extern GLShader_lightMapping                    *gl_lightMappingShader;
-extern GLShader_vertexLighting_DBS_entity       *gl_vertexLightingShader_DBS_entity;
-extern GLShader_vertexLighting_DBS_world        *gl_vertexLightingShader_DBS_world;
 extern GLShader_forwardLighting_omniXYZ         *gl_forwardLightingShader_omniXYZ;
 extern GLShader_forwardLighting_projXYZ         *gl_forwardLightingShader_projXYZ;
 extern GLShader_forwardLighting_directionalSun *gl_forwardLightingShader_directionalSun;

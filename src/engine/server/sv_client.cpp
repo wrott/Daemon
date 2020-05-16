@@ -42,7 +42,7 @@ Maryland 20850 USA.
 
 static void SV_CloseDownload( client_t *cl );
 
-void SV_GetChallenge( netadr_t from )
+void SV_GetChallenge( const netadr_t& from )
 {
 	if ( SV_Private(ServerPrivate::LanOnly) && !Sys_IsLANAddress(from) )
 	{
@@ -60,7 +60,7 @@ SV_DirectConnect
 A "connect" OOB command has been received
 ==================
 */
-void SV_DirectConnect( netadr_t from, const Cmd::Args& args )
+void SV_DirectConnect( const netadr_t& from, const Cmd::Args& args )
 {
 	if ( args.Argc() < 2 )
 	{
@@ -612,11 +612,6 @@ void SV_WWWDownload_f( client_t *cl, const Cmd::Args& args )
 		cl->bWWWing = true;
 		return;
 	}
-	else if ( !Q_stricmp( subcmd, "bbl8r" ) )
-	{
-		SV_DropClient( cl, "acking disconnected download mode" );
-		return;
-	}
 
 	// below for messages that only happen during/after download
 	if ( !cl->bWWWing )
@@ -678,7 +673,7 @@ when the cvar is set to something, the download server will effectively never us
 */
 static bool SV_CheckFallbackURL( client_t *cl, const char* pakName, msg_t *msg )
 {
-	if ( !sv_wwwFallbackURL->string || strlen( sv_wwwFallbackURL->string ) == 0 )
+	if ( !sv_wwwFallbackURL->string || !sv_wwwFallbackURL->string[0] )
 	{
 		return false;
 	}
@@ -710,7 +705,6 @@ void SV_WriteDownloadToClient( client_t *cl, msg_t *msg )
 	int      rate;
 	int      blockspersnap;
 	char     errorMessage[ 1024 ];
-	int      download_flag;
 
 	const FS::PakInfo* pak;
 	bool success;
@@ -814,14 +808,8 @@ void SV_WriteDownloadToClient( client_t *cl, msg_t *msg )
 					// download URL, size of the download file, download flags
 					MSG_WriteString( msg, cl->downloadURL );
 					MSG_WriteLong( msg, downloadSize );
-					download_flag = 0;
-
-					if ( sv_wwwDlDisconnected->integer )
-					{
-						download_flag |= DL_FLAG_DISCON;
-					}
-
-					MSG_WriteLong( msg, download_flag );  // flags
+					// Base URL length. The base prefix is expected to end with '/'
+					MSG_WriteLong( msg, strlen( sv_wwwBaseURL->string ) + 1 );
 					return;
 				}
 				else

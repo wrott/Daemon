@@ -208,7 +208,6 @@ struct clientConnection_t
 	int          downloadBlock; // block we are waiting for
 	int          downloadCount; // how many bytes we got
 	int          downloadSize; // how many bytes we got
-	int          downloadFlags; // misc download behaviour flags sent by the server
 	char         downloadList[ MAX_INFO_STRING ]; // list of paks we need to download
 
 	// www downloading
@@ -331,9 +330,8 @@ struct clientStatic_t
 	fontInfo_t *consoleFont;
 
 	// www downloading
-	// in the static stuff since this may have to survive server disconnects
+	// in the static stuff since this may have to survive server disconnects (but disconnected dl was removed so this is maybe no longer true?)
 	// if new stuff gets added, CL_ClearStaticDownload code needs to be updated for clear up
-	bool bWWWDlDisconnected; // keep going with the download after server disconnect
 	char     downloadName[ MAX_OSPATH ];
 	char     downloadTempName[ MAX_OSPATH ]; // in wwwdl mode, this is OS path (it's a qpath otherwise)
 	char     originalDownloadName[ MAX_QPATH ]; // if we get a redirect, keep a copy of the original file path
@@ -353,7 +351,6 @@ public:
 	void CGameInit(int serverMessageNum, int clientNum);
 	void CGameShutdown();
 	void CGameDrawActiveFrame(int serverTime, bool demoPlayback);
-	int CGameCrosshairPlayer();
 	void CGameKeyEvent(Keyboard::Key key, bool down);
 	void CGameMouseEvent(int dx, int dy);
 	void CGameMousePosEvent(int x, int y);
@@ -484,7 +481,6 @@ extern cvar_t *cl_mumbleScale;
 //
 
 void        CL_Init();
-void        CL_FlushMemory();
 void        CL_ShutdownAll();
 void        CL_AddReliableCommand( const char *cmd );
 
@@ -496,7 +492,6 @@ void        CL_Disconnect_f();
 void        CL_Vid_Restart_f();
 void        CL_Snd_Restart_f();
 
-void        CL_NextDemo();
 void        CL_ReadDemoMessage();
 
 void        CL_GetPing( int n, char *buf, int buflen, int *pingtime );
@@ -504,7 +499,6 @@ void        CL_ClearPing( int n );
 int         CL_GetPingQueueCount();
 
 void        CL_ShutdownRef();
-bool    CL_InitRef();
 
 int         CL_ServerStatus( const char *serverAddress, char *serverStatusString, int maxLen );
 
@@ -582,7 +576,7 @@ void CL_ParseServerMessage( msg_t *msg );
 
 //====================================================================
 
-void     CL_ServerInfoPacket( netadr_t from, msg_t *msg );
+void     CL_ServerInfoPacket( const netadr_t& from, msg_t *msg );
 void     CL_LocalServers_f();
 void     CL_GlobalServers_f();
 void     CL_Ping_f();
