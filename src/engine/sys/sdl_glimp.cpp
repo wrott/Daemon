@@ -485,7 +485,6 @@ static rserr_t GLimp_SetMode( int mode, bool fullscreen, bool noborder )
 	int         perChannelColorBits;
 	int         alphaBits, depthBits, stencilBits;
 	int         samples;
-	int         i = 0;
 	SDL_Surface *icon = nullptr;
 	SDL_DisplayMode desktopMode;
 	Uint32      flags = SDL_WINDOW_SHOWN | SDL_WINDOW_OPENGL;
@@ -628,18 +627,23 @@ static rserr_t GLimp_SetMode( int mode, bool fullscreen, bool noborder )
 		stencilBits = r_stencilbits->integer;
 		samples = r_ext_multisample->integer;
 
-		for ( i = 0; i < 4; i++ )
+		const int coreProfile = 0;
+		const int compatProfile = 1;
+		const int glProfiles[ 4 ][ 2 ] = {
+			// GL profile, framebuffer color bitness
+			{ coreProfile,   24 },
+			{ compatProfile, 24 },
+			{ coreProfile,   16 },
+			{ compatProfile, 16 }
+		};
+
+		for ( const int* glProfile : glProfiles )
 		{
-			int testColorBits, testCore;
 			int major = r_glMajorVersion->integer;
 			int minor = r_glMinorVersion->integer;
 
-			// 0 - 24 bit color, core
-			// 1 - 24 bit color, compat
-			// 2 - 16 bit color, core
-			// 3 - 16 bit color, compat
-			testColorBits = (i >= 2) ? 16 : 24;
-			testCore = ((i & 1) == 0);
+			int testCore = glProfile[ 0 ] == coreProfile;
+			int testColorBits = glProfile[ 1 ];
 
 			if( testCore && !Q_stricmp(r_glProfile->string, "compat") )
 				continue;
