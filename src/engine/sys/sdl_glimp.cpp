@@ -946,8 +946,19 @@ static rserr_t GLimp_SetMode( int mode, bool fullscreen, bool noborder )
 #endif
 	{
 		// glewInit failed, something is seriously wrong
+
 		GLimp_DestroyWindow();
-		Sys::Error( "GLimp_SetMode: could not load OpenGL subsystem: %s", glewGetErrorString( glewResult ) );
+
+		const char* profileName = GLimp_getProfileName( bestProfile );
+
+		Sys::Error( "GLEW initialization failed: %s.\n\n"
+			"Engine successfully created %d-bit GL %d.%d %d context,\n"
+			"This is a GLEW issue.",
+			glewGetErrorString( glewResult ),
+			bestColorBits,
+			bestMajor,
+			bestMinor,
+			profileName );
 	}
 	else
 	{
