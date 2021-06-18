@@ -951,7 +951,7 @@ ScreenshotCmd screenshotPNGRegistration("screenshotPNG", ssFormat_t::SSF_PNG, "p
 				r_mode->integer,
 				glConfig.vidWidth, glConfig.vidHeight,
 				fsstrings[ r_fullscreen->integer == 1 ],
-				out.c_str()
+				out
 				);
 		}
 
